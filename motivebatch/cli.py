@@ -107,6 +107,13 @@ def build_parser():
                       help="show which backends can run here, then exit")
     misc.add_argument("--find-dll", action="store_true",
                       help="print the located NMotive.dll path (empty if none), then exit")
+    misc.add_argument("--allow-fallback", dest="allow_fallback",
+                      action="store_true", default=None,
+                      help="if NMotive cannot export a take, retry with the "
+                           "portable reader (off by default on Windows)")
+    misc.add_argument("--no-fallback", dest="allow_fallback",
+                      action="store_false",
+                      help="never substitute the portable reader for NMotive")
     misc.add_argument("--no-prompt", action="store_true",
                       help="never ask interactively for the NMotive.dll path")
     misc.add_argument("-v", "--verbose", action="store_true",
@@ -214,7 +221,7 @@ def main(argv=None):
                 options=dict(markers=args.markers, header=args.header,
                              rotation=rotation, units=units,
                              frame_rate=args.frame_rate),
-                log=log)
+                log=log, allow_fallback=args.allow_fallback)
         except MotiveBatchError as exc:
             sys.stderr.write("Error converting {}: {}\n".format(src, exc))
             failures += 1

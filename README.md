@@ -79,10 +79,21 @@ set QT_QPA_PLATFORM=minimal
 
 **`File was written by a newer software version and cannot be read.`** — the
 take was recorded by a newer Motive than the one installed on this machine, and
-NMotive refuses to open it. Upgrade Motive to match, or just let it fall back:
-the portable reader is version agnostic and handles these takes, so on `--backend
-auto` (the default) motivebatch retries with it automatically and still produces
-a CSV. Only the exact-fidelity guarantee is lost.
+NMotive refuses to open it. Upgrade Motive to match.
+
+On Windows this fails loudly rather than quietly producing something else: a
+machine with Motive installed is expected to produce Motive's own output, so
+substituting the portable reader would silently change the fidelity of your
+data. Any partial file NMotive left behind is deleted, so a failed run never
+leaves a broken CSV on the Desktop.
+
+The portable reader *is* version agnostic and can convert these takes. If that
+tradeoff is what you want, ask for it explicitly:
+
+```
+convert.bat --allow-fallback Take.tak     # best-effort fidelity, but it converts
+convert.bat --backend native Take.tak     # same thing, chosen up front
+```
 
 **`QObject::killTimer: Timers cannot be stopped from another thread`** — benign
 Qt teardown noise from NMotive. If a CSV was written, it is fine.
@@ -108,6 +119,9 @@ convert.sh [options] <take.tak> [take2.tak ...] [NMotive.dll]
   --info                  describe the take without exporting
   --list-backends         show what can run here, and why
   --backend native        force a backend
+  --allow-fallback        retry with the portable reader if NMotive fails
+                          (off by default on Windows; NMotive or fail loudly)
+  --no-fallback           never substitute the portable reader
   -v, --verbose           explain the backend choice
 ```
 

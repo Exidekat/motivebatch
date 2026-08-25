@@ -6,6 +6,7 @@ option off Windows.
 """
 
 import os
+import sys
 
 from .. import config as _config
 from ..errors import BackendUnavailable, ExportNotSupported
@@ -80,34 +81,57 @@ def explain_failure(exc):
     return text
 
 
+def fallback_default():
+    """Whether a failed NMotive export should retry with the portable reader.
+
+    Off by default on Windows: a machine with Motive installed is expected to
+    produce Motive's own output, so a silent downgrade to best-effort fidelity
+    would be worse than a clear failure.  Elsewhere NMotive cannot run at all,
+    so the question does not arise.
+    """
+    return not sys.platform.startswith("win")
+
+
 def export_with_fallback(backend, source, dest, fmt=CSV, preference=AUTO,
-                         options=None, log=None):
-    """Export, falling back to the portable reader when NMotive cannot cope.
+                         options=None, log=None, allow_fallback=None):
+    """Export, optionally retrying with the portable reader when NMotive fails.
 
     NMotive raises .NET exceptions that are not MotiveBatchError, and it fails
     at export time rather than load time -- a take from a newer Motive than the
     one installed is the common case.  The pure-Python reader is version
-    agnostic, so for CSV it is worth a second attempt before giving up.
+    agnostic, but substituting it changes the fidelity of the result, so on
+    Windows that only happens when explicitly asked for.
     """
     options = options or {}
+    if allow_fallback is None:
+        allow_fallback = fallback_default()
     try:
         return backend.export(source, dest, fmt=fmt, **options)
     except ExportNotSupported:
         raise
     except Exception as exc:
-        can_retry = (preference == AUTO and fmt == CSV and backend.name == NMOTIVE)
+        # A half-written export must never survive the failure that produced
+        # it; a broken CSV on the Desktop reads as success.
+        _discard(dest)
+        can_retry = (allow_fallback and preference == AUTO
+                     and fmt == CSV and backend.name == NMOTIVE)
         if not can_retry:
+            if log and backend.name == NMOTIVE and fmt == CSV and not allow_fallback:
+                log("Not falling back to the portable reader; pass "
+                    "--allow-fallback to convert this take at best-effort fidelity.")
             raise
         if log:
             log("{} could not export this take: {}".format(backend.name, explain_failure(exc)))
             log("Falling back to the portable reader.")
-        # NMotive may have left a partial file behind.
-        try:
-            if os.path.exists(dest):
-                os.remove(dest)
-        except OSError:
-            pass
         return NativeBackend().export(source, dest, fmt=fmt, **options)
+
+
+def _discard(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass  # Losing the cleanup is not worth masking the original error.
 
 
 def available(dll_path=None):

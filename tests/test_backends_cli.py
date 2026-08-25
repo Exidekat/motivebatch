@@ -174,7 +174,8 @@ class TestExportFallback(_Tmp):
         dest = os.path.join(self.dir, "out.csv")
         notes = []
         backends.export_with_fallback(stub, self.tak, dest, fmt=fmt.CSV,
-                                      preference=backends.AUTO, log=notes.append)
+                                      preference=backends.AUTO, log=notes.append,
+                                      allow_fallback=True)
         self.assertTrue(stub.called)
         self.assertTrue(os.path.isfile(dest))
         with open(dest) as fh:
@@ -185,7 +186,7 @@ class TestExportFallback(_Tmp):
         stub = self._FailingNMotive("boom")
         dest = os.path.join(self.dir, "out.csv")
         backends.export_with_fallback(stub, self.tak, dest, fmt=fmt.CSV,
-                                      preference=backends.AUTO)
+                                      preference=backends.AUTO, allow_fallback=True)
         with open(dest) as fh:
             self.assertNotIn("partial", fh.read(200))
 
@@ -203,6 +204,47 @@ class TestExportFallback(_Tmp):
                                           os.path.join(self.dir, "out.avi"),
                                           fmt=fmt.AVI, preference=backends.AUTO)
 
+    def test_windows_does_not_substitute_the_reader_by_default(self):
+        # A Motive machine must produce Motive's output or say why it cannot;
+        # a silent drop to best-effort fidelity would be worse than failing.
+        stub = self._FailingNMotive("File was written by a newer software version "
+                                    "and cannot be read.")
+        notes = []
+        with self.assertRaises(RuntimeError):
+            backends.export_with_fallback(
+                stub, self.tak, os.path.join(self.dir, "out.csv"), fmt=fmt.CSV,
+                preference=backends.AUTO, log=notes.append, allow_fallback=False)
+        self.assertTrue(any("--allow-fallback" in n for n in notes),
+                        "refusing to fall back must say how to opt in")
+
+    def test_partial_output_is_discarded_when_failing_loudly(self):
+        stub = self._FailingNMotive("boom")
+        dest = os.path.join(self.dir, "out.csv")
+        with self.assertRaises(RuntimeError):
+            backends.export_with_fallback(stub, self.tak, dest, fmt=fmt.CSV,
+                                          preference=backends.AUTO,
+                                          allow_fallback=False)
+        self.assertFalse(os.path.exists(dest))
+
+    def test_fallback_default_is_off_on_windows_only(self):
+        expected = not sys.platform.startswith("win")
+        self.assertEqual(backends.fallback_default(), expected)
+
+    def test_cli_no_fallback_flag_surfaces_the_failure(self):
+        import motivebatch.backends as b
+        real = b.build
+        stub = self._FailingNMotive("File was written by a newer software version "
+                                    "and cannot be read.")
+        b.build = lambda *a, **k: (stub, [])
+        try:
+            rc = cli.main([self.tak, "--output-dir", self.dir, "--quiet",
+                           "--no-fallback"])
+        finally:
+            b.build = real
+        self.assertEqual(rc, 1)
+        # No half-written CSV may be left behind to look like a success.
+        self.assertFalse(os.path.isfile(os.path.join(self.dir, "Sample Take.csv")))
+
     def test_version_mismatch_is_explained_in_plain_words(self):
         msg = backends.explain_failure(
             RuntimeError("File was written by a newer software version and cannot be read."))
@@ -216,7 +258,8 @@ class TestExportFallback(_Tmp):
                                     "and cannot be read.")
         b.build = lambda *a, **k: (stub, [])
         try:
-            rc = cli.main([self.tak, "--output-dir", self.dir, "--quiet"])
+            rc = cli.main([self.tak, "--output-dir", self.dir, "--quiet",
+                           "--allow-fallback"])
         finally:
             b.build = real
         self.assertEqual(rc, 0)          # fell back successfully
