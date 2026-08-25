@@ -266,6 +266,96 @@ class TestExportFallback(_Tmp):
         self.assertTrue(os.path.isfile(os.path.join(self.dir, "Sample Take.csv")))
 
 
+class TestNMotiveExporterToggles(_Tmp):
+    """The CSVExporter property mapping, verified without the real assembly."""
+
+    class _Exporter:
+        def __init__(self):
+            self.WriteHeader = None
+            self.WriteMarkers = None
+            self.WriteRigidBodies = None
+            self.WriteRigidBodyMarkers = None
+            self.WriteBones = None
+            self.WriteBoneMarkers = None
+            self.WriteQualityStats = None
+            self.RotationType = None
+            self.Units = None
+            self.exported = None
+
+        def Export(self, take, dest, overwrite):
+            self.exported = (take, dest, overwrite)
+
+    def _stub_nm(self, exporter):
+        class Rotation:
+            QuaternionFormat = "quat"
+            XYZ = "XYZ"
+
+        class LengthUnits:
+            Units_Meters = "m"
+            Units_Centimeters = "cm"
+            Units_Millimeters = "mm"
+
+        class NM:
+            pass
+
+        nm = NM()
+        nm.Rotation = Rotation
+        nm.LengthUnits = LengthUnits
+        nm.Take = lambda path: ("take", path)
+        nm.CSVExporter = lambda: exporter
+        return nm
+
+    def _run(self, **options):
+        exporter = self._Exporter()
+        backend = NMotiveBackend("/fake/NMotive.dll")
+        backend._load = lambda: self._stub_nm(exporter)
+        backend.export(self.tak, os.path.join(self.dir, "out.csv"), **options)
+        return exporter
+
+    def test_defaults_match_motives_export_dialog(self):
+        e = self._run()
+        for prop in ("WriteHeader", "WriteMarkers", "WriteRigidBodies",
+                     "WriteRigidBodyMarkers", "WriteBones", "WriteBoneMarkers",
+                     "WriteQualityStats"):
+            self.assertIs(getattr(e, prop), True,
+                          "{} must default on, as Motive does".format(prop))
+
+    def test_no_markers_also_drops_dependent_marker_sets(self):
+        e = self._run(markers=False)
+        self.assertIs(e.WriteMarkers, False)
+        self.assertIs(e.WriteRigidBodyMarkers, False)
+        self.assertIs(e.WriteBoneMarkers, False)
+        self.assertIs(e.WriteRigidBodies, True)   # bodies still exported
+
+    def test_dependent_sets_can_be_overridden_independently(self):
+        e = self._run(markers=False, rigid_body_markers=True)
+        self.assertIs(e.WriteMarkers, False)
+        self.assertIs(e.WriteRigidBodyMarkers, True)
+
+    def test_units_and_rotation_are_translated(self):
+        e = self._run(units="Millimeters", rotation="XYZ")
+        self.assertEqual(e.Units, "mm")
+        self.assertEqual(e.RotationType, "XYZ")
+
+    def test_missing_properties_are_skipped_not_fatal(self):
+        # Older NMotive builds lack some toggles; setting them must not raise.
+        exporter = self._Exporter()
+        del exporter.WriteBoneMarkers
+        backend = NMotiveBackend("/fake/NMotive.dll")
+        backend._load = lambda: self._stub_nm(exporter)
+        backend.export(self.tak, os.path.join(self.dir, "out.csv"))
+        self.assertIs(exporter.WriteMarkers, True)
+
+    def test_nmotive_set_reaches_the_exporter(self):
+        e = self._run(nmotive_set={"WriteQualityStats": False})
+        self.assertIs(e.WriteQualityStats, False)
+
+    def test_unknown_nmotive_set_property_is_reported(self):
+        with self.assertRaises(ExportNotSupported) as cm:
+            self._run(nmotive_set={"NoSuchProperty": True})
+        self.assertIn("dump-exporter", str(cm.exception))
+
+
 class TestConfigDiscovery(_Tmp):
     def test_explicit_path_wins(self):
         dll = os.path.join(self.dir, "NMotive.dll")
