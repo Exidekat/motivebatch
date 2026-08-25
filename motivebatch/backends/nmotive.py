@@ -13,8 +13,21 @@ import os
 import sys
 
 from .. import units as _units
-from ..errors import BackendUnavailable
+from ..errors import BackendUnavailable, ExportNotSupported
 from .base import AVI, BVH, C3D, CSV, FBX_ASCII, FBX_BINARY, TRC, Backend
+
+#: CSVExporter toggles, mapped to our option names.  Motive's own export
+#: dialog has all of these on, so that is what "match Motive's defaults"
+#: means; NMotive's bare property defaults are more conservative.
+_CSV_TOGGLES = (
+    ("WriteHeader", "header"),
+    ("WriteMarkers", "markers"),
+    ("WriteRigidBodies", "rigid_bodies"),
+    ("WriteRigidBodyMarkers", "rigid_body_markers"),
+    ("WriteBones", "bones"),
+    ("WriteBoneMarkers", "bone_markers"),
+    ("WriteQualityStats", "quality_stats"),
+)
 
 #: Export format -> NMotive exporter class name.
 _EXPORTERS = {
@@ -116,8 +129,11 @@ class NMotiveBackend(Backend):
 
     # -- export ---------------------------------------------------------------
 
-    def export(self, source, dest, fmt=CSV, markers=False, header=True,
-               rotation=_units.Quaternions, units=_units.Meters, **_ignored):
+    def export(self, source, dest, fmt=CSV, markers=True, header=True,
+               rotation=_units.Quaternions, units=_units.Meters,
+               rigid_bodies=True, rigid_body_markers=None, bones=True,
+               bone_markers=None, quality_stats=True, nmotive_set=None,
+               **_ignored):
         self.check(fmt)
         nm = self._load()
         take = nm.Take(os.path.abspath(source))
@@ -125,9 +141,25 @@ class NMotiveBackend(Backend):
         exporter = getattr(nm, _EXPORTERS[fmt])()
         if fmt == CSV:
             exporter.RotationType = self._rotation(nm, rotation)
-            exporter.WriteMarkers = markers
-            exporter.WriteHeader = header
             exporter.Units = self._length_units(nm, units)
+            values = dict(header=header, markers=markers,
+                          rigid_bodies=rigid_bodies,
+                          rigid_body_markers=markers if rigid_body_markers is None
+                          else rigid_body_markers,
+                          bones=bones,
+                          bone_markers=markers if bone_markers is None else bone_markers,
+                          quality_stats=quality_stats)
+            for prop, key in _CSV_TOGGLES:
+                value = values.get(key)
+                # Property names vary across NMotive releases; set what exists.
+                if value is not None and hasattr(exporter, prop):
+                    setattr(exporter, prop, bool(value))
+            for prop, value in (nmotive_set or {}).items():
+                if not hasattr(exporter, prop):
+                    raise ExportNotSupported(
+                        "this NMotive build has no CSVExporter property "
+                        "{!r}; use --dump-exporter to list them".format(prop))
+                setattr(exporter, prop, value)
         elif fmt in (FBX_ASCII, FBX_BINARY):
             # NMotive exposes both through one exporter with a format flag.
             if hasattr(exporter, "Binary"):
@@ -135,6 +167,34 @@ class NMotiveBackend(Backend):
 
         exporter.Export(take, os.path.abspath(dest), True)
         return dest
+
+    def exporter_properties(self, fmt=CSV):
+        """List an exporter's properties and current values.
+
+        The available toggles differ between NMotive releases, and they cannot
+        be enumerated anywhere but on a machine that can load the assembly.
+        """
+        nm = self._load()
+        exporter = getattr(nm, _EXPORTERS[fmt])()
+        out = []
+        try:
+            for prop in exporter.GetType().GetProperties():
+                try:
+                    value = getattr(exporter, prop.Name)
+                except Exception:
+                    value = "<unreadable>"
+                out.append((prop.Name, value))
+        except Exception:
+            for name in sorted(dir(exporter)):
+                if name.startswith("_"):
+                    continue
+                try:
+                    value = getattr(exporter, name)
+                except Exception:
+                    continue
+                if not callable(value):
+                    out.append((name, value))
+        return sorted(out)
 
     def take_info(self, source):
         nm = self._load()

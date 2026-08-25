@@ -81,13 +81,18 @@ class Take(object):
         dest = self._dest(fname, "." + fmt)
         return self.backend_for(fmt).export(self.fname, dest, fmt=fmt, **options)
 
-    def to_csv(self, fname=None, markers=False, header=True,
-               rotation=Quaternions, units=Meters, frame_rate=None):
-        """Export the take's tracking data to a CSV file."""
+    def to_csv(self, fname=None, markers=True, header=True,
+               rotation=Quaternions, units=Meters, frame_rate=None, **options):
+        """Export the take's tracking data to a CSV file.
+
+        Defaults mirror Motive's own CSV export, which includes marker data --
+        note that ``markers`` defaulted to False before 0.3.0, producing a file
+        a fraction of the expected size on marker-heavy takes.
+        """
         dest = self._dest(fname, ".csv")
         return self.backend_for(_fmt.CSV).export(
             self.fname, dest, fmt=_fmt.CSV, markers=markers, header=header,
-            rotation=rotation, units=units, frame_rate=frame_rate)
+            rotation=rotation, units=units, frame_rate=frame_rate, **options)
 
     def to_avi(self, fname=None):
         """Export the take's video content to an AVI file (Windows/NMotive only)."""

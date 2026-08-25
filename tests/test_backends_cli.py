@@ -361,13 +361,17 @@ class TestCliEndToEnd(_Tmp):
     def test_output_with_multiple_inputs_rejected(self):
         self.assertEqual(cli.main([self.tak, self.tak, "-o", "x.csv"]), 2)
 
-    def test_markers_widen_the_export(self):
+    def test_markers_are_included_by_default(self):
+        # Motive's own export includes markers, so ours must too; --no-markers
+        # is the opt-out. Before 0.3.0 this defaulted the other way.
         cli.main([self.tak, "--output-dir", self.dir, "--quiet", "--overwrite"])
-        plain = open(os.path.join(self.dir, "Sample Take.csv")).read()
+        default = open(os.path.join(self.dir, "Sample Take.csv")).read()
         cli.main([self.tak, "--output-dir", self.dir, "--quiet", "--overwrite",
-                  "--markers"])
-        wide = open(os.path.join(self.dir, "Sample Take.csv")).read()
-        self.assertGreater(len(wide), len(plain))
+                  "--no-markers"])
+        narrow = open(os.path.join(self.dir, "Sample Take.csv")).read()
+        self.assertGreater(len(default), len(narrow))
+        self.assertIn("Marker", default.splitlines()[3])
+        self.assertNotIn("Marker", narrow.splitlines()[3])
 
     def test_desktop_dir_is_a_directory_or_none(self):
         d = cli.desktop_dir()

@@ -109,7 +109,12 @@ prints the exact reason NMotive was skipped.
 ```
 convert.sh [options] <take.tak> [take2.tak ...] [NMotive.dll]
 
-  --markers               include individual marker positions
+  --markers               include marker positions (default, as Motive does)
+  --no-markers            rigid bodies only; much smaller files
+  --no-bones              omit skeleton bones (NMotive only)
+  --no-quality-stats      omit quality statistics (NMotive only)
+  --nmotive-set N=V       set any exporter property directly (repeatable)
+  --dump-exporter         list the exporter's properties and defaults
   --units mm|cm|meters    length units (default: meters)
   --rotation XYZ|...      quaternion (default) or any of the six Euler orders
   --format csv|avi|...    export format (non-CSV needs Windows + Motive)
@@ -176,6 +181,30 @@ python3 -m unittest discover -s tests -t .
 
 The suite builds its own synthetic `.tak` files, so it runs on a bare clone.
 Dropping a real take into `temp/` enables the integration tests as well.
+
+## Export defaults
+
+Defaults mirror Motive's own CSV export: markers, rigid bodies, rigid body
+markers, bones and quality statistics all on, quaternion rotations, meters.
+
+> **Changed in 0.3.0.** `markers` previously defaulted to `False`, inherited
+> from the original IronPython API. On a marker-heavy take that produces a file
+> a fraction of the expected size — three times smaller on the reference take.
+> Pass `--no-markers` for the old behaviour.
+
+If an export looks too small, compare it against Motive's own export **of the
+same take**, and check which toggles your NMotive build actually exposes:
+
+```
+convert.bat --dump-exporter
+```
+
+Anything listed there can be set directly, whether or not motivebatch has a
+flag for it:
+
+```
+convert.bat --nmotive-set WriteBoneMarkers=true Take.tak
+```
 
 ## Limitations
 

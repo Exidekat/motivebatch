@@ -88,9 +88,18 @@ def build_parser():
                      help="replace an existing file instead of adding a ' (1)' suffix")
 
     exp = p.add_argument_group("export options")
-    exp.add_argument("--markers", dest="markers", action="store_true", default=False,
-                     help="include individual marker positions")
-    exp.add_argument("--no-markers", dest="markers", action="store_false")
+    exp.add_argument("--markers", dest="markers", action="store_true", default=True,
+                     help="include marker positions (default, as Motive does)")
+    exp.add_argument("--no-markers", dest="markers", action="store_false",
+                     help="rigid bodies only; much smaller files")
+    exp.add_argument("--bones", dest="bones", action="store_true", default=True,
+                     help="include skeleton bones (default; NMotive only)")
+    exp.add_argument("--no-bones", dest="bones", action="store_false")
+    exp.add_argument("--quality-stats", dest="quality_stats", action="store_true",
+                     default=True, help="include quality statistics (default; NMotive only)")
+    exp.add_argument("--no-quality-stats", dest="quality_stats", action="store_false")
+    exp.add_argument("--nmotive-set", metavar="NAME=VALUE", action="append", default=[],
+                     help="set any exporter property directly (repeatable)")
     exp.add_argument("--header", dest="header", action="store_true", default=True,
                      help="write the descriptive header block (default)")
     exp.add_argument("--no-header", dest="header", action="store_false")
@@ -105,6 +114,8 @@ def build_parser():
     misc.add_argument("--info", action="store_true", help="describe the take, do not export")
     misc.add_argument("--list-backends", action="store_true",
                       help="show which backends can run here, then exit")
+    misc.add_argument("--dump-exporter", action="store_true",
+                      help="list the NMotive exporter's properties and defaults, then exit")
     misc.add_argument("--find-dll", action="store_true",
                       help="print the located NMotive.dll path (empty if none), then exit")
     misc.add_argument("--allow-fallback", dest="allow_fallback",
@@ -161,6 +172,18 @@ def main(argv=None):
     inputs, positional_dll = _classify(args.paths)
     dll = args.dll or positional_dll
 
+    if args.dump_exporter:
+        from .backends.nmotive import NMotiveBackend
+        backend = NMotiveBackend(_config.find_dll(dll))
+        try:
+            props = backend.exporter_properties(args.fmt)
+        except MotiveBatchError as exc:
+            sys.stderr.write("Error: {}\n".format(exc))
+            return 1
+        for name, value in props:
+            sys.stdout.write("{:28} {}\n".format(name, value))
+        return 0
+
     if args.find_dll:
         found = _config.find_dll(dll)
         if found:
@@ -183,6 +206,22 @@ def main(argv=None):
 
     rotation = _ROTATIONS[args.rotation]
     units = _UNITS[args.units]
+
+    nmotive_set = {}
+    for item in args.nmotive_set:
+        if "=" not in item:
+            sys.stderr.write("--nmotive-set expects NAME=VALUE, got {!r}\n".format(item))
+            return 2
+        name, _, raw = item.partition("=")
+        low = raw.strip().lower()
+        if low in ("true", "false"):
+            value = (low == "true")
+        else:
+            try:
+                value = int(raw)
+            except ValueError:
+                value = raw
+        nmotive_set[name.strip()] = value
 
     try:
         backend, notes = _backends.build(
@@ -220,7 +259,9 @@ def main(argv=None):
                 backend, src, dest, fmt=args.fmt, preference=args.backend,
                 options=dict(markers=args.markers, header=args.header,
                              rotation=rotation, units=units,
-                             frame_rate=args.frame_rate),
+                             frame_rate=args.frame_rate, bones=args.bones,
+                             quality_stats=args.quality_stats,
+                             nmotive_set=nmotive_set),
                 log=log, allow_fallback=args.allow_fallback)
         except MotiveBatchError as exc:
             sys.stderr.write("Error converting {}: {}\n".format(src, exc))

@@ -19,9 +19,11 @@ class NativeBackend(Backend):
     def describe(self):
         return "native (pure Python, no dependencies; CSV only, best-effort fidelity)"
 
-    def export(self, source, dest, fmt=CSV, markers=False, header=True,
+    def export(self, source, dest, fmt=CSV, markers=True, header=True,
                rotation=_units.Quaternions, units=_units.Meters,
                frame_rate=None, **_ignored):
+        # bones / quality_stats / nmotive_set are NMotive-only and are ignored
+        # here; this reader has no skeleton support.
         self.check(fmt)
         doc = _load(source)
         if not doc.assets:
