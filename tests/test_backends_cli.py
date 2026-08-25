@@ -2,6 +2,7 @@
 
 import io
 import os
+import time
 import struct
 import sys
 import tempfile
@@ -390,13 +391,94 @@ class TestProgressReporting(_Tmp):
             bar.pulse()
         self.assertNotIn("%", s.getvalue())
 
-    def test_pulse_helper_returns_and_propagates(self):
-        from motivebatch.progress import Progress, run_with_pulse
+    def test_work_stays_on_the_calling_thread(self):
+        # NMotive's Qt objects must be used on the thread that created them;
+        # running Export on a worker deadlocks. Only the animation may move.
+        import threading
+        from motivebatch.progress import Progress, pulse_while
+        caller = threading.current_thread().ident
+        ran_on = []
         bar = Progress("t.tak", stream=self._tty())
-        self.assertEqual(run_with_pulse(lambda: 42, bar, interval=0.01), 42)
+        with pulse_while(bar, interval=0.01):
+            ran_on.append(threading.current_thread().ident)
+        self.assertEqual(ran_on, [caller])
+
+    def test_pulse_animates_while_work_blocks(self):
+        from motivebatch.progress import Progress, pulse_while
+        s = self._tty()
+        bar = Progress("t.tak", stream=s)
+        with pulse_while(bar, interval=0.01):
+            time.sleep(0.15)
+        frames = [f for f in s.getvalue().split("\r") if f.strip()]
+        self.assertGreater(len(frames), 2, "the bar must visibly move")
+        self.assertIn("working", s.getvalue())
+
+    def test_pulse_propagates_failures_and_clears(self):
+        from motivebatch.progress import Progress, pulse_while
+        bar = Progress("t.tak", stream=self._tty())
         with self.assertRaises(ValueError):
-            run_with_pulse(lambda: (_ for _ in ()).throw(ValueError("x")),
-                           Progress("t.tak", stream=self._tty()), interval=0.01)
+            with pulse_while(bar, interval=0.01):
+                raise ValueError("x")
+        self.assertFalse(bar._dirty, "a failed run must not leave a bar drawn")
+
+    def test_pulse_thread_does_not_outlive_the_block(self):
+        import threading
+        from motivebatch.progress import Progress, pulse_while
+        before = threading.active_count()
+        bar = Progress("t.tak", stream=self._tty())
+        with pulse_while(bar, interval=0.01):
+            pass
+        time.sleep(0.05)
+        self.assertLessEqual(threading.active_count(), before)
+
+    def test_watcher_reports_bytes_written(self):
+        from motivebatch.progress import file_watcher
+        path = os.path.join(self.dir, "growing.csv")
+        with open(path, "wb") as fh:
+            fh.write(b"x" * 2048)
+        detail = file_watcher(path)
+        self.assertIn("KB", detail())
+
+    def test_watcher_is_quiet_before_the_file_exists(self):
+        from motivebatch.progress import file_watcher
+        self.assertEqual(file_watcher(os.path.join(self.dir, "absent.csv"))(), "")
+
+    def test_human_bytes_scales(self):
+        from motivebatch.progress import human_bytes
+        self.assertEqual(human_bytes(512), "512 B")
+        self.assertEqual(human_bytes(1536), "1.5 KB")
+        self.assertEqual(human_bytes(5 * 1024 ** 3), "5.0 GB")
+
+    def test_indeterminate_bar_shows_written_size(self):
+        from motivebatch.progress import Progress
+        path = os.path.join(self.dir, "out.csv")
+        with open(path, "wb") as fh:
+            fh.write(b"x" * (3 * 1024 * 1024))
+        s = self._tty()
+        from motivebatch.progress import file_watcher
+        bar = Progress("t.tak", stream=s, detail=file_watcher(path)).start(None)
+        bar._last_draw = 0.0
+        bar.pulse()
+        self.assertIn("3.0 MB", s.getvalue())
+
+    def test_detail_failure_cannot_break_the_bar(self):
+        from motivebatch.progress import Progress
+        def boom():
+            raise RuntimeError("nope")
+        s = self._tty()
+        bar = Progress("t.tak", stream=s, detail=boom).start(None)
+        bar._last_draw = 0.0
+        bar.pulse()          # must not raise
+        self.assertIn("working", s.getvalue())
+
+    def test_indeterminate_bar_shows_elapsed_time(self):
+        from motivebatch.progress import Progress
+        s = self._tty()
+        bar = Progress("t.tak", stream=s).start(None)
+        bar._started -= 75          # pretend 75s have passed
+        bar._last_draw = 0.0        # clear the redraw throttle
+        bar.pulse()
+        self.assertIn("1m15s", s.getvalue())
 
     def test_ascii_fallback_when_glyphs_are_unencodable(self):
         # cp437 does carry both block glyphs, so the fallback must key on the

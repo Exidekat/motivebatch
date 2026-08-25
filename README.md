@@ -194,8 +194,16 @@ Each run names the take it was handed, then draws a progress bar:
 
 The percentage is real when the portable reader is doing the work, since it
 counts frames as it writes them. NMotive's `Export` is a single opaque call
-with no progress callback, so there the bar sweeps to show it is still working
-rather than inventing a percentage. The bar draws on stderr and switches itself
+with no progress callback, so there the bar sweeps and reports the size of the
+file as it grows rather than inventing a percentage:
+
+```
+  My Take.tak [░░░░░░░░███████░░░░░░░░░░░░░] working  27m14s  842.1 MB  0.6 MB/s
+```
+
+A full export of a long take runs to **several gigabytes** and can take hours —
+that is expected, not a fault. The byte counter is how you tell it is
+advancing. The bar draws on stderr and switches itself
 off when output is redirected, so `convert.sh take.tak > files.txt` still yields
 a clean list of paths. `--no-progress` disables it.
 

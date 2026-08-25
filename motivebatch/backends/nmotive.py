@@ -17,8 +17,8 @@ from ..errors import BackendUnavailable, ExportNotSupported
 from .base import AVI, BVH, C3D, CSV, FBX_ASCII, FBX_BINARY, TRC, Backend
 
 #: CSVExporter toggles, mapped to our option names.  Motive's own export
-#: dialog has all of these on, so that is what "match Motive's defaults"
-#: means; NMotive's bare property defaults are more conservative.
+#: dialog has these on, and a full export of a long take runs to gigabytes --
+#: large output is expected here, not a symptom.
 _CSV_TOGGLES = (
     ("WriteHeader", "header"),
     ("WriteMarkers", "markers"),
@@ -142,6 +142,8 @@ class NMotiveBackend(Backend):
         if fmt == CSV:
             exporter.RotationType = self._rotation(nm, rotation)
             exporter.Units = self._length_units(nm, units)
+            # A None override leaves NMotive's own default in place; the
+            # marker-dependent sets follow `markers` unless set explicitly.
             values = dict(header=header, markers=markers,
                           rigid_bodies=rigid_bodies,
                           rigid_body_markers=markers if rigid_body_markers is None
@@ -167,8 +169,11 @@ class NMotiveBackend(Backend):
 
         target = os.path.abspath(dest)
         if progress is not None and getattr(progress, "enabled", False):
-            from ..progress import run_with_pulse
-            run_with_pulse(lambda: exporter.Export(take, target, True), progress)
+            from ..progress import pulse_while
+            # Export must run here, on the thread that built take/exporter.
+            # Poll the growing file so a multi-hour export visibly advances.
+            with pulse_while(progress, watch=target):
+                exporter.Export(take, target, True)
         else:
             exporter.Export(take, target, True)
         return dest

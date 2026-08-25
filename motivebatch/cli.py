@@ -99,6 +99,11 @@ def build_parser():
     exp.add_argument("--quality-stats", dest="quality_stats", action="store_true",
                      default=True, help="include quality statistics (default; NMotive only)")
     exp.add_argument("--no-quality-stats", dest="quality_stats", action="store_false")
+    exp.add_argument("--rigid-body-markers", dest="rigid_body_markers",
+                     action="store_true", default=None,
+                     help="include rigid body markers (NMotive only)")
+    exp.add_argument("--no-rigid-body-markers", dest="rigid_body_markers",
+                     action="store_false")
     exp.add_argument("--nmotive-set", metavar="NAME=VALUE", action="append", default=[],
                      help="set any exporter property directly (repeatable)")
     exp.add_argument("--header", dest="header", action="store_true", default=True,
@@ -269,6 +274,7 @@ def main(argv=None):
                              rotation=rotation, units=units,
                              frame_rate=args.frame_rate, bones=args.bones,
                              quality_stats=args.quality_stats,
+                             rigid_body_markers=args.rigid_body_markers,
                              nmotive_set=nmotive_set, progress=bar),
                 log=log, allow_fallback=args.allow_fallback)
         except MotiveBatchError as exc:

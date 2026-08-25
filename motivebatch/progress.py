@@ -5,6 +5,7 @@ paths, and disables itself when not attached to a terminal so redirected output
 does not fill up with control characters.
 """
 
+import os
 import sys
 import time
 
@@ -14,6 +15,42 @@ _ASCII = ("#", ".")
 #: Redraws per second.  Frequent enough to look smooth, rare enough that the
 #: drawing never becomes a measurable share of the export time.
 _REDRAW_HZ = 20.0
+
+
+def human_bytes(n):
+    """Compact size, e.g. 842.1 MB."""
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024.0 or unit == "TB":
+            return "{:.0f} {}".format(n, unit) if unit == "B" else "{:.1f} {}".format(n, unit)
+        n /= 1024.0
+
+
+def file_watcher(path):
+    """A detail callback reporting how much of ``path`` has been written.
+
+    NMotive offers no progress callback, but the file it is writing is right
+    there on disk -- for a multi-gigabyte export that is the difference between
+    "working" and knowing it is advancing.
+    """
+    state = {}
+
+    def detail():
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return ""
+        now = time.time()
+        if "t0" not in state:
+            state["t0"], state["s0"] = now, size
+            return human_bytes(size)
+        span = now - state["t0"]
+        text = human_bytes(size)
+        if span > 1.0:
+            text += "  {}/s".format(human_bytes((size - state["s0"]) / span))
+        return text
+
+    return detail
 
 
 def _supports_unicode(stream):
@@ -31,10 +68,12 @@ def _supports_unicode(stream):
 class Progress(object):
     """Determinate when a total is known, an animated pulse when it is not."""
 
-    def __init__(self, label="", stream=None, enabled=None, width=28):
+    def __init__(self, label="", stream=None, enabled=None, width=28, detail=None):
         self.stream = stream or sys.stderr
         self.label = label
         self.width = width
+        #: Optional callable returning extra text for the indeterminate tail.
+        self.detail = detail
         if enabled is None:
             enabled = bool(getattr(self.stream, "isatty", lambda: False)())
         self.enabled = enabled
@@ -103,7 +142,7 @@ class Progress(object):
     # -- rendering ------------------------------------------------------------
 
     def _line_width(self):
-        return self.width + len(self.label) + 40
+        return self.width + len(self.label) + 56
 
     def _draw(self, force=False, final=False):
         if not self.enabled:
@@ -128,7 +167,19 @@ class Progress(object):
                 pos = cycle - pos
             bar = (self.empty * pos + self.full * span
                    + self.empty * (self.width - span - pos))
-            tail = "working" if not final else "done"
+            elapsed = int(now - (self._started or now))
+            if elapsed >= 60:
+                clock = "{}m{:02d}s".format(elapsed // 60, elapsed % 60)
+            else:
+                clock = "{}s".format(elapsed)
+            tail = "done" if final else "working  {}".format(clock)
+            if not final and self.detail is not None:
+                try:
+                    extra = self.detail()
+                except Exception:
+                    extra = ""
+                if extra:
+                    tail += "  " + extra
             if final:
                 bar = self.full * self.width
 
@@ -139,34 +190,52 @@ class Progress(object):
         self._dirty = True
 
 
-def run_with_pulse(fn, bar, interval=0.08):
-    """Run ``fn`` on a worker thread while animating an indeterminate bar.
+class pulse_while(object):
+    """Animate an indeterminate bar while the caller does blocking work.
 
-    NMotive's Export is a single opaque call with no progress callback, so the
-    only honest feedback is "still working" rather than a invented percentage.
+    The work stays on the *calling* thread and only the animation is moved to a
+    background thread.  The reverse -- running the work on a worker -- deadlocks
+    NMotive: it is Qt-based, and its Take and exporter objects must be used on
+    the thread that created them.
     """
-    import threading
 
-    outcome = {}
+    def __init__(self, bar, interval=0.1, watch=None):
+        self.bar = bar
+        self.interval = interval
+        self.watch = watch
+        self._stop = None
+        self._thread = None
 
-    def worker():
-        try:
-            outcome["value"] = fn()
-        except BaseException as exc:      # re-raised on the calling thread
-            outcome["error"] = exc
+    def __enter__(self):
+        if not getattr(self.bar, "enabled", False):
+            return self
+        import threading
+        if self.watch and getattr(self.bar, "detail", None) is None:
+            self.bar.detail = file_watcher(self.watch)
+        self._stop = threading.Event()
+        self.bar.start(None)
+        self._thread = threading.Thread(target=self._animate)
+        self._thread.daemon = True   # never keeps the process alive
+        self._thread.start()
+        return self
 
-    thread = threading.Thread(target=worker)
-    thread.daemon = True
-    bar.start(None)
-    thread.start()
-    while thread.is_alive():
-        bar.pulse()
-        thread.join(interval)
-    if "error" in outcome:
-        bar.clear()
-        raise outcome["error"]
-    bar.finish()
-    return outcome.get("value")
+    def _animate(self):
+        while not self._stop.wait(self.interval):
+            try:
+                self.bar.pulse()
+            except Exception:
+                return  # a broken stream must not take the export down
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._stop is not None:
+            self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        if exc_type is None:
+            self.bar.finish()
+        else:
+            self.bar.clear()
+        return False
 
 
 class NullProgress(object):
