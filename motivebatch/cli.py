@@ -209,14 +209,23 @@ def main(argv=None):
             folder = os.path.dirname(os.path.abspath(dest))
             if folder and not os.path.isdir(folder):
                 os.makedirs(folder, exist_ok=True)
-            backend.export(src, dest, fmt=args.fmt, markers=args.markers,
-                           header=args.header, rotation=rotation, units=units,
-                           frame_rate=args.frame_rate)
+            _backends.export_with_fallback(
+                backend, src, dest, fmt=args.fmt, preference=args.backend,
+                options=dict(markers=args.markers, header=args.header,
+                             rotation=rotation, units=units,
+                             frame_rate=args.frame_rate),
+                log=log)
         except MotiveBatchError as exc:
             sys.stderr.write("Error converting {}: {}\n".format(src, exc))
             failures += 1
         except (OSError, IOError) as exc:
             sys.stderr.write("Error writing {}: {}\n".format(dest, exc))
+            failures += 1
+        except Exception as exc:
+            # Backends can raise foreign exception types (NMotive surfaces .NET
+            # ones); report them cleanly and keep going through the batch.
+            sys.stderr.write("Error converting {}: {}\n".format(
+                src, _backends.explain_failure(exc)))
             failures += 1
         else:
             sys.stdout.write("{}\n".format(dest))

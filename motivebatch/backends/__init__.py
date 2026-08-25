@@ -5,6 +5,8 @@ Motive's own; the pure-Python backend is the portable fallback and the only
 option off Windows.
 """
 
+import os
+
 from .. import config as _config
 from ..errors import BackendUnavailable, ExportNotSupported
 from .base import ALL_FORMATS, CSV, Backend
@@ -59,6 +61,53 @@ def build(preference=AUTO, dll_path=None, fmt=CSV, allow_prompt=True,
     native = NativeBackend()
     native.check(fmt)  # raises ExportNotSupported for AVI/BVH/... off Windows
     return native, notes
+
+
+#: Substrings in a backend error that the portable reader may well survive.
+_RECOVERABLE_HINTS = (
+    "newer software version",   # take recorded by a newer Motive than is installed
+    "cannot be read",
+    "unsupported",
+)
+
+
+def explain_failure(exc):
+    """Turn a backend exception into an actionable one-liner, when we can."""
+    text = str(exc)
+    if "newer software version" in text:
+        return ("this take was recorded by a newer version of Motive than the "
+                "one installed here, so NMotive refuses to open it")
+    return text
+
+
+def export_with_fallback(backend, source, dest, fmt=CSV, preference=AUTO,
+                         options=None, log=None):
+    """Export, falling back to the portable reader when NMotive cannot cope.
+
+    NMotive raises .NET exceptions that are not MotiveBatchError, and it fails
+    at export time rather than load time -- a take from a newer Motive than the
+    one installed is the common case.  The pure-Python reader is version
+    agnostic, so for CSV it is worth a second attempt before giving up.
+    """
+    options = options or {}
+    try:
+        return backend.export(source, dest, fmt=fmt, **options)
+    except ExportNotSupported:
+        raise
+    except Exception as exc:
+        can_retry = (preference == AUTO and fmt == CSV and backend.name == NMOTIVE)
+        if not can_retry:
+            raise
+        if log:
+            log("{} could not export this take: {}".format(backend.name, explain_failure(exc)))
+            log("Falling back to the portable reader.")
+        # NMotive may have left a partial file behind.
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+        except OSError:
+            pass
+        return NativeBackend().export(source, dest, fmt=fmt, **options)
 
 
 def available(dll_path=None):

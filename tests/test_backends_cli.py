@@ -151,6 +151,78 @@ class TestMotiveRootDiscovery(_Tmp):
         self.assertIn("platforms", cm.exception.reason)
 
 
+class TestExportFallback(_Tmp):
+    """A take NMotive cannot open should still convert via the portable reader."""
+
+    class _FailingNMotive:
+        name = backends.NMOTIVE
+
+        def __init__(self, message):
+            self.message = message
+            self.called = False
+
+        def export(self, source, dest, fmt=fmt.CSV, **options):
+            self.called = True
+            # Leave a partial file behind, as a failed exporter would.
+            with open(dest, "w") as fh:
+                fh.write("partial")
+            raise RuntimeError(self.message)
+
+    def test_falls_back_when_nmotive_cannot_read_the_take(self):
+        stub = self._FailingNMotive("File was written by a newer software version "
+                                    "and cannot be read.")
+        dest = os.path.join(self.dir, "out.csv")
+        notes = []
+        backends.export_with_fallback(stub, self.tak, dest, fmt=fmt.CSV,
+                                      preference=backends.AUTO, log=notes.append)
+        self.assertTrue(stub.called)
+        self.assertTrue(os.path.isfile(dest))
+        with open(dest) as fh:
+            self.assertIn("Format Version", fh.readline())
+        self.assertTrue(any("newer version of Motive" in n for n in notes))
+
+    def test_partial_output_is_replaced_not_appended(self):
+        stub = self._FailingNMotive("boom")
+        dest = os.path.join(self.dir, "out.csv")
+        backends.export_with_fallback(stub, self.tak, dest, fmt=fmt.CSV,
+                                      preference=backends.AUTO)
+        with open(dest) as fh:
+            self.assertNotIn("partial", fh.read(200))
+
+    def test_no_fallback_when_a_backend_was_demanded(self):
+        stub = self._FailingNMotive("boom")
+        with self.assertRaises(RuntimeError):
+            backends.export_with_fallback(stub, self.tak,
+                                          os.path.join(self.dir, "out.csv"),
+                                          fmt=fmt.CSV, preference=backends.NMOTIVE)
+
+    def test_no_fallback_for_formats_the_reader_cannot_produce(self):
+        stub = self._FailingNMotive("boom")
+        with self.assertRaises(RuntimeError):
+            backends.export_with_fallback(stub, self.tak,
+                                          os.path.join(self.dir, "out.avi"),
+                                          fmt=fmt.AVI, preference=backends.AUTO)
+
+    def test_version_mismatch_is_explained_in_plain_words(self):
+        msg = backends.explain_failure(
+            RuntimeError("File was written by a newer software version and cannot be read."))
+        self.assertIn("newer version of Motive", msg)
+
+    def test_cli_reports_foreign_errors_without_a_traceback(self):
+        # A .NET exception escaping the backend must not crash the batch.
+        import motivebatch.backends as b
+        real = b.build
+        stub = self._FailingNMotive("File was written by a newer software version "
+                                    "and cannot be read.")
+        b.build = lambda *a, **k: (stub, [])
+        try:
+            rc = cli.main([self.tak, "--output-dir", self.dir, "--quiet"])
+        finally:
+            b.build = real
+        self.assertEqual(rc, 0)          # fell back successfully
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "Sample Take.csv")))
+
+
 class TestConfigDiscovery(_Tmp):
     def test_explicit_path_wins(self):
         dll = os.path.join(self.dir, "NMotive.dll")

@@ -77,6 +77,16 @@ platform plugin cannot initialise at all. Set a headless platform first:
 set QT_QPA_PLATFORM=minimal
 ```
 
+**`File was written by a newer software version and cannot be read.`** — the
+take was recorded by a newer Motive than the one installed on this machine, and
+NMotive refuses to open it. Upgrade Motive to match, or just let it fall back:
+the portable reader is version agnostic and handles these takes, so on `--backend
+auto` (the default) motivebatch retries with it automatically and still produces
+a CSV. Only the exact-fidelity guarantee is lost.
+
+**`QObject::killTimer: Timers cannot be stopped from another thread`** — benign
+Qt teardown noise from NMotive. If a CSV was written, it is fine.
+
 **Exit code `-1073741515` (`0xC0000135`)** — a sibling DLL is missing entirely.
 Same cause, same fix: use the DLL in the real install directory.
 
