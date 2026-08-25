@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motivebatch"
+version = "0.2.0"
+description = "Convert OptiTrack Motive .tak files to CSV and other formats, on any OS."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Nicholas A. Del Grosso", email = "delgrosso@bio.lmu.de" },
+]
+keywords = ["optitrack", "motive", "motion-capture", "tak", "csv", "nmotive"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+# The core reader is standard library only, so a clone runs with no install.
+dependencies = []
+
+[project.optional-dependencies]
+# Only needed to drive Motive's own exporter, which is Windows-only.
+nmotive = ["pythonnet>=3.0; platform_system=='Windows'"]
+
+[project.scripts]
+motivebatch = "motivebatch.cli:main"
+
+[tool.setuptools]
+packages = ["motivebatch", "motivebatch.tak", "motivebatch.backends"]
