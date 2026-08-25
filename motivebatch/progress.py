@@ -26,31 +26,94 @@ def human_bytes(n):
         n /= 1024.0
 
 
-def file_watcher(path):
-    """A detail callback reporting how much of ``path`` has been written.
+#: How often to rescan the output directory for temp files (seconds).
+_SCAN_EVERY = 2.0
 
-    NMotive offers no progress callback, but the file it is writing is right
-    there on disk -- for a multi-gigabyte export that is the difference between
-    "working" and knowing it is advancing.
+
+def file_watcher(path):
+    """A detail callback describing what is actually reaching the disk.
+
+    NMotive exposes no progress callback, so the output file gets polled
+    instead.  It reports a stall explicitly rather than repeating a frozen
+    number: an exporter that buffers, or writes through a temp file, leaves the
+    destination untouched for a long time, and "1.1 MB" every second reads as
+    progress when it is the opposite.  Sibling files that appear alongside the
+    destination are picked up too, since that is where a temp file would be.
     """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    target = os.path.abspath(path)
     state = {}
 
-    def detail():
+    def _size(p):
+        """Size, or None when the file does not exist yet."""
         try:
-            size = os.path.getsize(path)
+            return os.path.getsize(p)
         except OSError:
-            return ""
+            return None
+
+    def _scratch(now):
+        """Largest sibling file touched since we started, if any."""
+        if now - state.get("scanned", 0.0) < _SCAN_EVERY:
+            return state.get("scratch")
+        state["scanned"] = now
+        best = None
+        try:
+            for name in os.listdir(directory):
+                full = os.path.join(directory, name)
+                if full == target:
+                    continue
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                if st.st_mtime >= state["t0"] - 1.0 and st.st_size > 0:
+                    if best is None or st.st_size > best[1]:
+                        best = (name, st.st_size)
+        except OSError:
+            best = None
+        state["scratch"] = best
+        return best
+
+    def detail():
         now = time.time()
-        if "t0" not in state:
-            state["t0"], state["s0"] = now, size
+        size = _size(target)
+        if size is None:
+            # Not created yet; stay quiet rather than reporting a bare 0 B.
+            state.setdefault("t0", now)
+            return ""
+        if "t0" not in state or "s0" not in state:
+            state.update(t0=state.get("t0", now), s0=size,
+                         last_size=size, last_change=now)
             return human_bytes(size)
-        span = now - state["t0"]
+
+        if size != state["last_size"]:
+            state["last_size"] = size
+            state["last_change"] = now
+
         text = human_bytes(size)
-        if span > 1.0:
+        span = now - state["t0"]
+        still = now - state["last_change"]
+
+        if size > state["s0"] and span > 1.0:
             text += "  {}/s".format(human_bytes((size - state["s0"]) / span))
+        elif still > 10.0:
+            # Say so plainly; a frozen counter otherwise looks like progress.
+            text += "  unchanged {}".format(_short_clock(still))
+            scratch = _scratch(now)
+            if scratch:
+                text += "  ({} {})".format(scratch[0], human_bytes(scratch[1]))
         return text
 
     return detail
+
+
+def _short_clock(seconds):
+    seconds = int(seconds)
+    if seconds >= 3600:
+        return "{}h{:02d}m".format(seconds // 3600, (seconds % 3600) // 60)
+    if seconds >= 60:
+        return "{}m{:02d}s".format(seconds // 60, seconds % 60)
+    return "{}s".format(seconds)
 
 
 def _supports_unicode(stream):
@@ -167,11 +230,7 @@ class Progress(object):
                 pos = cycle - pos
             bar = (self.empty * pos + self.full * span
                    + self.empty * (self.width - span - pos))
-            elapsed = int(now - (self._started or now))
-            if elapsed >= 60:
-                clock = "{}m{:02d}s".format(elapsed // 60, elapsed % 60)
-            else:
-                clock = "{}s".format(elapsed)
+            clock = _short_clock(now - (self._started or now))
             tail = "done" if final else "working  {}".format(clock)
             if not final and self.detail is not None:
                 try:

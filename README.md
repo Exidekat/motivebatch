@@ -203,7 +203,20 @@ file as it grows rather than inventing a percentage:
 
 A full export of a long take runs to **several gigabytes** and can take hours —
 that is expected, not a fault. The byte counter is how you tell it is
-advancing. The bar draws on stderr and switches itself
+advancing.
+
+If the destination stops growing, the bar says so rather than repeating a
+frozen number, and names any temp file that appeared beside it:
+
+```
+  My Take.tak [░░░░███████░░░░░░░░░░░░░░░░░] working  26m00s  1.1 MB  unchanged 26m00s
+```
+
+A stalled destination while the process is still writing to disk means the
+bytes are going somewhere else — an exporter-internal temp file, or the
+pagefile if NMotive is buffering the export in memory. To find out which, open
+Resource Monitor (`resmon`), go to **Disk → Disk Activity** and filter on
+`python.exe`; it lists the exact file being written. The bar draws on stderr and switches itself
 off when output is redirected, so `convert.sh take.tak > files.txt` still yields
 a clean list of paths. `--no-progress` disables it.
 

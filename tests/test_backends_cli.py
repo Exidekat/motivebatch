@@ -439,6 +439,53 @@ class TestProgressReporting(_Tmp):
         detail = file_watcher(path)
         self.assertIn("KB", detail())
 
+    def test_watcher_reports_a_rate_once_the_file_grows(self):
+        import motivebatch.progress as pr
+        path = os.path.join(self.dir, "growing.csv")
+        open(path, "wb").write(b"x" * 1024)
+        detail = pr.file_watcher(path)
+        detail()
+        open(path, "wb").write(b"x" * (5 * 1024 * 1024))
+        real = time.time
+        try:
+            pr.time.time = lambda: real() + 10
+            self.assertIn("/s", detail())
+        finally:
+            pr.time.time = real
+
+    def test_watcher_calls_out_a_stalled_file(self):
+        # A frozen byte count reads as progress; the stall has to be explicit.
+        import motivebatch.progress as pr
+        path = os.path.join(self.dir, "stalled.csv")
+        open(path, "wb").write(b"x" * 4096)
+        detail = pr.file_watcher(path)
+        detail()
+        real = time.time
+        try:
+            pr.time.time = lambda: real() + 1500
+            text = detail()
+        finally:
+            pr.time.time = real
+        self.assertIn("unchanged", text)
+        self.assertIn("25m", text)
+
+    def test_watcher_surfaces_a_sibling_temp_file(self):
+        # An exporter that writes through a temp file leaves the destination
+        # untouched; naming the temp file is the only clue anything is moving.
+        import motivebatch.progress as pr
+        path = os.path.join(self.dir, "out.csv")
+        open(path, "wb").write(b"x" * 4096)
+        detail = pr.file_watcher(path)
+        detail()
+        open(os.path.join(self.dir, "export.tmp"), "wb").write(b"y" * 200000)
+        real = time.time
+        try:
+            pr.time.time = lambda: real() + 1500
+            text = detail()
+        finally:
+            pr.time.time = real
+        self.assertIn("export.tmp", text)
+
     def test_watcher_is_quiet_before_the_file_exists(self):
         from motivebatch.progress import file_watcher
         self.assertEqual(file_watcher(os.path.join(self.dir, "absent.csv"))(), "")
