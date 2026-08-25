@@ -356,6 +356,84 @@ class TestNMotiveExporterToggles(_Tmp):
         self.assertIn("dump-exporter", str(cm.exception))
 
 
+class TestProgressReporting(_Tmp):
+    def _tty(self):
+        class FakeTTY(io.StringIO):
+            encoding = "utf-8"
+
+            def isatty(self):
+                return True
+        return FakeTTY()
+
+    def test_bar_reaches_one_hundred_percent(self):
+        from motivebatch.progress import Progress
+        s = self._tty()
+        bar = Progress("t.tak", stream=s).start(10)
+        for i in range(1, 11):
+            bar.update(i)
+        bar.finish()
+        self.assertIn("100%", s.getvalue())
+
+    def test_bar_is_silent_when_output_is_redirected(self):
+        from motivebatch.progress import Progress
+        s = io.StringIO()
+        bar = Progress("t.tak", stream=s).start(10)
+        bar.update(5)
+        bar.finish()
+        self.assertEqual(s.getvalue(), "", "a redirected stream must stay clean")
+
+    def test_indeterminate_bar_never_invents_a_percentage(self):
+        from motivebatch.progress import Progress
+        s = self._tty()
+        bar = Progress("t.tak", stream=s).start(None)
+        for _ in range(6):
+            bar.pulse()
+        self.assertNotIn("%", s.getvalue())
+
+    def test_pulse_helper_returns_and_propagates(self):
+        from motivebatch.progress import Progress, run_with_pulse
+        bar = Progress("t.tak", stream=self._tty())
+        self.assertEqual(run_with_pulse(lambda: 42, bar, interval=0.01), 42)
+        with self.assertRaises(ValueError):
+            run_with_pulse(lambda: (_ for _ in ()).throw(ValueError("x")),
+                           Progress("t.tak", stream=self._tty()), interval=0.01)
+
+    def test_ascii_fallback_when_glyphs_are_unencodable(self):
+        # cp437 does carry both block glyphs, so the fallback must key on the
+        # encoding actually failing rather than on "looks like Windows".
+        from motivebatch.progress import Progress
+        class Cp1252(io.StringIO):
+            encoding = "cp1252"
+
+            def isatty(self):
+                return True
+        s = Cp1252()
+        bar = Progress("t.tak", stream=s).start(4)
+        bar.update(2)
+        bar.finish()
+        out = s.getvalue()
+        self.assertNotIn("\u2588", out)
+        self.assertIn("#", out)
+
+    def test_block_glyphs_used_where_the_encoding_allows(self):
+        from motivebatch.progress import Progress
+        for encoding in ("utf-8", "cp437"):
+            # encoding is read-only on instances, so bind it on the class.
+            stream_cls = type("Stream", (io.StringIO,),
+                              {"encoding": encoding, "isatty": lambda self: True})
+            s = stream_cls()
+            bar = Progress("t.tak", stream=s).start(4)
+            bar.update(4)
+            bar.finish()
+            self.assertIn("\u2588", s.getvalue(),
+                          "{} can encode the blocks".format(encoding))
+
+    def test_cli_no_progress_flag_is_accepted(self):
+        rc = cli.main([self.tak, "--output-dir", self.dir, "--quiet",
+                       "--no-progress"])
+        self.assertEqual(rc, 0)
+
+
 class TestConfigDiscovery(_Tmp):
     def test_explicit_path_wins(self):
         dll = os.path.join(self.dir, "NMotive.dll")

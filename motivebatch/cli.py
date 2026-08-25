@@ -16,6 +16,7 @@ from . import __version__
 from . import backends as _backends
 from . import config as _config
 from . import units as _units
+from .progress import NullProgress, Progress
 from .backends import base as _fmt
 from .errors import MotiveBatchError
 
@@ -127,6 +128,8 @@ def build_parser():
                       help="never substitute the portable reader for NMotive")
     misc.add_argument("--no-prompt", action="store_true",
                       help="never ask interactively for the NMotive.dll path")
+    misc.add_argument("--no-progress", dest="progress", action="store_false",
+                      default=True, help="do not draw a progress bar")
     misc.add_argument("-v", "--verbose", action="store_true",
                       help="explain why a backend was or was not chosen")
     misc.add_argument("-q", "--quiet", action="store_true")
@@ -241,8 +244,9 @@ def main(argv=None):
                 "header block is a best-effort match for Motive's own exporter.")
     log("Using the {} backend.".format(backend.name))
 
+    show_progress = args.progress and not args.quiet
     failures = 0
-    for src in inputs:
+    for index, src in enumerate(inputs, start=1):
         if not os.path.isfile(src):
             sys.stderr.write("Error: no such file: {}\n".format(src))
             failures += 1
@@ -251,6 +255,10 @@ def main(argv=None):
             failures += _show_info(src, backend, log)
             continue
         dest = _destination(src, args, "." + _ext_for(args.fmt), log)
+        label = os.path.basename(src)
+        if len(inputs) > 1:
+            label = "[{}/{}] {}".format(index, len(inputs), label)
+        bar = Progress(label) if show_progress else NullProgress()
         try:
             folder = os.path.dirname(os.path.abspath(dest))
             if folder and not os.path.isdir(folder):
@@ -261,15 +269,18 @@ def main(argv=None):
                              rotation=rotation, units=units,
                              frame_rate=args.frame_rate, bones=args.bones,
                              quality_stats=args.quality_stats,
-                             nmotive_set=nmotive_set),
+                             nmotive_set=nmotive_set, progress=bar),
                 log=log, allow_fallback=args.allow_fallback)
         except MotiveBatchError as exc:
+            bar.clear()
             sys.stderr.write("Error converting {}: {}\n".format(src, exc))
             failures += 1
         except (OSError, IOError) as exc:
+            bar.clear()
             sys.stderr.write("Error writing {}: {}\n".format(dest, exc))
             failures += 1
         except Exception as exc:
+            bar.clear()
             # Backends can raise foreign exception types (NMotive surfaces .NET
             # ones); report them cleanly and keep going through the batch.
             sys.stderr.write("Error converting {}: {}\n".format(

@@ -133,7 +133,7 @@ class NMotiveBackend(Backend):
                rotation=_units.Quaternions, units=_units.Meters,
                rigid_bodies=True, rigid_body_markers=None, bones=True,
                bone_markers=None, quality_stats=True, nmotive_set=None,
-               **_ignored):
+               progress=None, **_ignored):
         self.check(fmt)
         nm = self._load()
         take = nm.Take(os.path.abspath(source))
@@ -165,7 +165,12 @@ class NMotiveBackend(Backend):
             if hasattr(exporter, "Binary"):
                 exporter.Binary = (fmt == FBX_BINARY)
 
-        exporter.Export(take, os.path.abspath(dest), True)
+        target = os.path.abspath(dest)
+        if progress is not None and getattr(progress, "enabled", False):
+            from ..progress import run_with_pulse
+            run_with_pulse(lambda: exporter.Export(take, target, True), progress)
+        else:
+            exporter.Export(take, target, True)
         return dest
 
     def exporter_properties(self, fmt=CSV):

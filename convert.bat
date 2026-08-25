@@ -46,6 +46,13 @@ exit /b 1
 :have_python
 if "%~1"=="" goto :usage
 
+REM Name what we were handed before anything else is printed, so a drag-and-drop
+REM window always opens by saying which take it is working on.
+echo.
+for %%A in (%*) do (
+    if /i "%%~xA"==".tak" echo   Take: %%~nxA
+)
+
 REM Nothing to install unless Motive is actually on this machine: the pure
 REM Python reader handles CSV on its own.
 if exist "%VENV%\Scripts\python.exe" goto :run
@@ -53,7 +60,6 @@ set "FOUNDDLL="
 for /f "usebackq delims=" %%D in (`%PYEXE% -m motivebatch --find-dll %* 2^>nul`) do set "FOUNDDLL=%%D"
 if not defined FOUNDDLL goto :run
 
-echo.
 echo   Motive found: %FOUNDDLL%
 echo   Preparing Motive's own exporter for exact-fidelity output.
 echo   This happens once and needs an internet connection.

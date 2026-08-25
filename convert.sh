@@ -54,4 +54,11 @@ MSG
     exit 2
 fi
 
+# Name the takes first, matching convert.bat.
+for arg in "$@"; do
+    case "$arg" in
+        *.tak|*.TAK) printf '\n  Take: %s\n' "$(basename "$arg")" >&2 ;;
+    esac
+done
+
 exec "$PYEXE" -m motivebatch "$@"

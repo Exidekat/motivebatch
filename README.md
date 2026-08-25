@@ -127,6 +127,7 @@ convert.sh [options] <take.tak> [take2.tak ...] [NMotive.dll]
   --allow-fallback        retry with the portable reader if NMotive fails
                           (off by default on Windows; NMotive or fail loudly)
   --no-fallback           never substitute the portable reader
+  --no-progress           do not draw a progress bar
   -v, --verbose           explain the backend choice
 ```
 
@@ -181,6 +182,22 @@ python3 -m unittest discover -s tests -t .
 
 The suite builds its own synthetic `.tak` files, so it runs on a bare clone.
 Dropping a real take into `temp/` enables the integration tests as well.
+
+## Progress
+
+Each run names the take it was handed, then draws a progress bar:
+
+```
+  Take: My Take.tak
+  My Take.tak [████████████████░░░░░░░░░░░░]  58%  1,489/2,577
+```
+
+The percentage is real when the portable reader is doing the work, since it
+counts frames as it writes them. NMotive's `Export` is a single opaque call
+with no progress callback, so there the bar sweeps to show it is still working
+rather than inventing a percentage. The bar draws on stderr and switches itself
+off when output is redirected, so `convert.sh take.tak > files.txt` still yields
+a clean list of paths. `--no-progress` disables it.
 
 ## Export defaults
 

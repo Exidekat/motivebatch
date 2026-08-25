@@ -72,16 +72,21 @@ class TestCsvWriter(unittest.TestCase):
             fixtures.simple_take(frames=4, rigid_bodies=2, markers=3), name="fixture")
 
     def test_column_count_without_markers(self):
-        rows = _render(self.doc)
+        rows = _render(self.doc, markers=False)
         # 2 index columns + 2 bodies x (4 rot + 3 pos + 1 error)
         self.assertEqual(len(rows[7]), 2 + 2 * 8)
+
+    def test_markers_are_included_by_default(self):
+        # Mirrors Motive's own export; it was the other way before 0.3.0.
+        rows = _render(self.doc)
+        self.assertEqual(len(rows[7]), 2 + 2 * 8 + 3 * 3)
 
     def test_column_count_with_markers(self):
         rows = _render(self.doc, markers=True)
         self.assertEqual(len(rows[7]), 2 + 2 * 8 + 3 * 3)
 
     def test_euler_rotation_narrows_columns(self):
-        rows = _render(self.doc, rotation="XYZ")
+        rows = _render(self.doc, rotation="XYZ", markers=False)
         self.assertEqual(len(rows[7]), 2 + 2 * 7)
 
     def test_header_rows_describe_columns(self):
@@ -94,6 +99,15 @@ class TestCsvWriter(unittest.TestCase):
         self.assertEqual(rows[6][2], "Rotation")
         self.assertEqual(rows[7][:2], ["Frame", "Time (Seconds)"])
         self.assertEqual(rows[3][-1], "Marker")
+
+    def test_progress_callback_reports_every_frame(self):
+        seen = []
+        _render(self.doc, progress=lambda done, total: seen.append((done, total)))
+        self.assertTrue(seen)
+        self.assertEqual(seen[0], (0, 4))
+        self.assertEqual(seen[-1], (4, 4))          # always ends at 100%
+        self.assertTrue(all(t == 4 for _, t in seen))
+        self.assertEqual(seen, sorted(seen))        # monotonic
 
     def test_no_header_emits_data_only(self):
         rows = _render(self.doc, header=False)

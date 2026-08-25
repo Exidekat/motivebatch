@@ -120,6 +120,9 @@ def export_with_fallback(backend, source, dest, fmt=CSV, preference=AUTO,
                 log("Not falling back to the portable reader; pass "
                     "--allow-fallback to convert this take at best-effort fidelity.")
             raise
+        bar = options.get("progress")
+        if bar is not None:
+            bar.clear()
         if log:
             log("{} could not export this take: {}".format(backend.name, explain_failure(exc)))
             log("Falling back to the portable reader.")

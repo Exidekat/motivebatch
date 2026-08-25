@@ -79,8 +79,9 @@ def _asset_row_values(group, frame, rotation, scale):
     return out
 
 
-def write(doc, stream, markers=False, header=True,
-          rotation=_units.Quaternions, units=_units.Meters, frame_rate=None):
+def write(doc, stream, markers=True, header=True,
+          rotation=_units.Quaternions, units=_units.Meters, frame_rate=None,
+          progress=None):
     """Write ``doc`` as CSV into the text ``stream``."""
     if rotation not in _units.ROTATION_TYPES:
         raise ValueError("unknown rotation type: {!r}".format(rotation))
@@ -124,8 +125,16 @@ def write(doc, stream, markers=False, header=True,
             w.writerow(row)
 
     period = (1.0 / rate) if rate else 0.0
-    for frame in range(first, last + 1):
+    span = last - first + 1
+    if progress is not None:
+        progress(0, span)
+    for i, frame in enumerate(range(first, last + 1)):
         row = [frame, "%.6f" % (frame * period)]
         for g in groups:
             row.extend(_fmt(v) for v in _asset_row_values(g, frame, rotation, scale))
         w.writerow(row)
+        # The bar throttles by time as well; this just keeps the call cheap.
+        if progress is not None and not (i & 0x3F):
+            progress(i + 1, span)
+    if progress is not None:
+        progress(span, span)
