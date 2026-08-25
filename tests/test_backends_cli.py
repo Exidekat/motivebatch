@@ -695,6 +695,24 @@ class TestCliEndToEnd(_Tmp):
         self.assertIn("Marker", default.splitlines()[3])
         self.assertNotIn("Marker", narrow.splitlines()[3])
 
+    def test_destination_is_announced_before_converting(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cli.main([self.tak, "--output-dir", self.dir, "--no-progress"])
+        self.assertIn("Writing:", err.getvalue())
+        self.assertIn(os.path.join(self.dir, "Sample Take.csv"), err.getvalue())
+
+    def test_announced_path_reflects_the_collision_suffix(self):
+        # The " (1)" name is exactly the case where watching the obvious file
+        # would mislead.
+        import contextlib
+        cli.main([self.tak, "--output-dir", self.dir, "--quiet"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cli.main([self.tak, "--output-dir", self.dir, "--no-progress"])
+        self.assertIn("Sample Take (1).csv", err.getvalue())
+
     def test_desktop_dir_is_a_directory_or_none(self):
         d = cli.desktop_dir()
         self.assertTrue(d is None or os.path.isdir(d))

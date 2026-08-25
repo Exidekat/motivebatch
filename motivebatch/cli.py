@@ -264,6 +264,10 @@ def main(argv=None):
         if len(inputs) > 1:
             label = "[{}/{}] {}".format(index, len(inputs), label)
         bar = Progress(label) if show_progress else NullProgress()
+        # Say where the output is going *before* starting: with the " (1)"
+        # suffixing and a Desktop that may be OneDrive-redirected, the file
+        # being written is not always the one the user is watching.
+        log("Writing: {}".format(dest))
         try:
             folder = os.path.dirname(os.path.abspath(dest))
             if folder and not os.path.isdir(folder):

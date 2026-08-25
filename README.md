@@ -224,13 +224,18 @@ any external tooling:
 
 Memory climbing into the gigabytes means NMotive is buffering the export in
 RAM; once that starts paging, throughput collapses. Modest memory with the
-written counter climbing means it is streaming to a file elsewhere. If you need
-to find that file:
+written counter climbing means it is streaming normally — most likely to a
+different file than the one you are watching, since the Desktop may be
+OneDrive-redirected and a collision adds a `" (1)"` suffix. Every run prints
+`Writing: <path>` before it starts, so check that line first. To find recent
+CSVs across both Desktops:
 
 ```powershell
-Get-ChildItem $env:TEMP, "$env:USERPROFILE\Desktop" -File |
-  Sort-Object LastWriteTime -Descending | Select-Object -First 10 Name,
-  @{n='MB';e={[int]($_.Length/1MB)}}, LastWriteTime
+$dirs = @("$env:USERPROFILE\Desktop", "$env:OneDrive\Desktop",
+          "$env:USERPROFILE\OneDrive\Desktop") |
+        Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+Get-ChildItem $dirs -File -Filter *.csv | Sort-Object LastWriteTime -Descending |
+  Select-Object -First 10 FullName, @{n='MB';e={[int]($_.Length/1MB)}}, LastWriteTime
 ```
 
 For a take that will not fit in memory, `--backend native` streams frame by
