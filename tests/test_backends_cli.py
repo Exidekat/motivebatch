@@ -543,6 +543,63 @@ class TestProgressReporting(_Tmp):
         self.assertIn("mem 3.0 GB", text)
         self.assertIn("proc wrote 940.0 MB", text)
 
+    def test_line_never_exceeds_the_terminal_width(self):
+        # A line longer than the console wraps, and \r then only rewinds the
+        # last visual row -- so the bar scrolls forever instead of redrawing.
+        import motivebatch.progress as pr
+        real = pr.Progress.__dict__["_term_width"]
+        try:
+            for cols in (24, 40, 80, 100, 120, 200):
+                pr.Progress._term_width = staticmethod(lambda c=cols: c)
+                s = self._tty()
+                bar = pr.Progress("A Rather Long Take File Name.tak", stream=s)
+                bar.detail = lambda: "10.9 MB  702.7 KB/s"
+                bar.start(None)
+                for _ in range(4):
+                    bar._last_draw = 0.0
+                    bar.pulse()
+                bar._last_draw = 0.0
+                bar.finish()
+                for frame in s.getvalue().replace("\n", "").split("\r"):
+                    self.assertLessEqual(
+                        len(frame), cols - 1,
+                        "line of {} chars overflows a {}-column console".format(
+                            len(frame), cols))
+        finally:
+            pr.Progress._term_width = real
+
+    def test_determinate_bar_also_respects_width(self):
+        import motivebatch.progress as pr
+        real = pr.Progress.__dict__["_term_width"]
+        try:
+            pr.Progress._term_width = staticmethod(lambda: 60)
+            s = self._tty()
+            bar = pr.Progress("a-very-long-take-file-name-indeed.tak", stream=s).start(250000)
+            for n in (1000, 100000, 250000):
+                bar._last_draw = 0.0
+                bar.update(n)
+            for frame in s.getvalue().split("\r"):
+                self.assertLessEqual(len(frame), 59)
+        finally:
+            pr.Progress._term_width = real
+
+    def test_shrinking_line_erases_the_previous_one(self):
+        # Going from a long line to a short one must not leave stale tail text.
+        from motivebatch.progress import Progress
+        s = self._tty()
+        bar = Progress("t.tak", stream=s)
+        bar.detail = lambda: "1234567890 MB  999.9 KB/s"
+        bar.start(None)
+        bar._last_draw = 0.0
+        bar.pulse()
+        long_len = bar._last_len
+        bar.detail = lambda: ""
+        bar._last_draw = 0.0
+        bar.pulse()
+        frames = s.getvalue().split("\r")
+        self.assertGreaterEqual(len(frames[-1]), long_len,
+                                "short line must pad over the longer one")
+
     def test_indeterminate_bar_shows_elapsed_time(self):
         from motivebatch.progress import Progress
         s = self._tty()

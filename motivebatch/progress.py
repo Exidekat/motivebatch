@@ -236,6 +236,7 @@ class Progress(object):
         self._pulse = 0
         self._started = None
         self._dirty = False
+        self._last_len = 0
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -287,14 +288,26 @@ class Progress(object):
 
     def clear(self):
         if self.enabled and self._dirty:
-            self.stream.write("\r" + " " * self._line_width() + "\r")
+            self.stream.write("\r" + " " * self._last_len + "\r")
             self.stream.flush()
             self._dirty = False
+            self._last_len = 0
 
     # -- rendering ------------------------------------------------------------
 
-    def _line_width(self):
-        return self.width + len(self.label) + 96
+    @staticmethod
+    def _term_width():
+        try:
+            import shutil
+            return max(24, shutil.get_terminal_size(fallback=(80, 24)).columns)
+        except Exception:
+            return 80
+
+    @staticmethod
+    def _shorten(text, limit):
+        if limit <= 1 or len(text) <= limit:
+            return text[:max(0, limit)]
+        return text[:limit - 1] + "~"
 
     def _draw(self, force=False, final=False):
         if not self.enabled:
@@ -306,19 +319,9 @@ class Progress(object):
 
         if self.total:
             frac = min(1.0, max(0.0, float(self.done) / self.total))
-            filled = int(round(frac * self.width))
-            bar = self.full * filled + self.empty * (self.width - filled)
             tail = "{:3.0f}%  {:,}/{:,}".format(frac * 100.0, self.done, self.total)
         else:
-            # No total: sweep a short block back and forth instead of faking a
-            # percentage we do not actually know.
-            span = max(1, self.width // 4)
-            cycle = max(1, (self.width - span) * 2)
-            pos = self._pulse % cycle
-            if pos > (self.width - span):
-                pos = cycle - pos
-            bar = (self.empty * pos + self.full * span
-                   + self.empty * (self.width - span - pos))
+            frac = None
             clock = _short_clock(now - (self._started or now))
             tail = "done" if final else "working  {}".format(clock)
             if not final and self.detail is not None:
@@ -328,13 +331,43 @@ class Progress(object):
                     extra = ""
                 if extra:
                     tail += "  " + extra
-            if final:
-                bar = self.full * self.width
 
-        line = "  {} [{}] {}".format(self.label, bar, tail) if self.label \
-            else "  [{}] {}".format(bar, tail)
-        self.stream.write("\r" + line.ljust(self._line_width())[:self._line_width()])
+        # Everything must fit one terminal row: a line longer than the console
+        # wraps, and \r then only rewinds the last visual row, so the bar
+        # scrolls down the screen instead of redrawing in place.
+        # Allocate what is left after the numbers: the size and rate are the
+        # point of the line, the filename and the bar can give up room.
+        limit = self._term_width() - 1
+        _MIN_BAR = 10
+        room_for_label = limit - len(tail) - _MIN_BAR - 6
+        label = self._shorten(self.label, max(0, min(len(self.label), room_for_label)))
+        overhead = len(label) + len(tail) + (6 if label else 4)
+        bar_w = min(self.width, limit - overhead)
+        if bar_w < 4:
+            # No room for a bar; keep the numbers, which matter more.
+            line = "  {} {}".format(label, tail) if label else "  " + tail
+        else:
+            if frac is None:
+                span = max(1, bar_w // 4)
+                cycle = max(1, (bar_w - span) * 2)
+                pos = self._pulse % cycle
+                if pos > (bar_w - span):
+                    pos = cycle - pos
+                bar = (self.empty * pos + self.full * span
+                       + self.empty * (bar_w - span - pos))
+                if final:
+                    bar = self.full * bar_w
+            else:
+                filled = int(round(frac * bar_w))
+                bar = self.full * filled + self.empty * (bar_w - filled)
+            line = "  {} [{}] {}".format(label, bar, tail) if label \
+                else "  [{}] {}".format(bar, tail)
+
+        line = line[:limit]
+        pad = max(0, self._last_len - len(line))
+        self.stream.write("\r" + line + " " * pad)
         self.stream.flush()
+        self._last_len = len(line)
         self._dirty = True
 
 
