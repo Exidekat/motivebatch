@@ -34,10 +34,13 @@ class NMotiveBackend(Backend):
 
     def __init__(self, dll_path=None):
         self.dll_path = dll_path
+        self.motive_root = None
         self._nm = None
 
     def describe(self):
         where = self.dll_path or "not located"
+        if self.motive_root:
+            where += "; Motive root " + self.motive_root
         return "nmotive (Motive's own exporter via pythonnet; Windows only) [{}]".format(where)
 
     # -- loading --------------------------------------------------------------
@@ -67,6 +70,7 @@ class NMotiveBackend(Backend):
                 self.name, "no such file: {}".format(self.dll_path))
 
         _verify_assembly(self.dll_path, self.name)
+        self.motive_root = prepare_native_environment(self.dll_path, self.name)
 
         import clr
         try:
@@ -136,6 +140,77 @@ class NMotiveBackend(Backend):
         nm = self._load()
         take = nm.Take(os.path.abspath(source))
         return {"frame_rate": float(take.FrameRate), "frame_count": None}
+
+
+#: Handles returned by os.add_dll_directory must be kept alive, or the
+#: directory is removed again when they are garbage collected.
+_DLL_DIR_HANDLES = []
+
+#: How far up from NMotive.dll to look for the Motive install root.
+_ROOT_SEARCH_DEPTH = 5
+
+
+def find_motive_root(dll_path):
+    """Walk up from NMotive.dll to the Motive install directory.
+
+    NMotive.dll lives in ``<root>\\assemblies\\x64``, while the Qt runtime and
+    its ``platforms`` plugin directory live in ``<root>``.
+    """
+    folder = os.path.dirname(os.path.abspath(dll_path))
+    for _ in range(_ROOT_SEARCH_DEPTH):
+        if (os.path.isdir(os.path.join(folder, "platforms"))
+                or os.path.isfile(os.path.join(folder, "Motive.exe"))):
+            return folder
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    return None
+
+
+def prepare_native_environment(dll_path, backend_name):
+    """Point Qt at its plugins before NMotive.dll is loaded.
+
+    NMotive links Qt, and Qt resolves its platform plugin relative to the host
+    executable -- which here is python.exe, not Motive.exe.  Without this, Qt
+    reports 'Could not find the Qt platform plugin "windows" in ""' and calls
+    qFatal, aborting the process with 0xC0000409 before any Python exception
+    handler can run.  So this must happen up front, not in a try/except.
+    """
+    root = find_motive_root(dll_path)
+    if root is None:
+        raise BackendUnavailable(
+            backend_name,
+            "found {} but not the Motive install directory above it. NMotive "
+            "needs the Qt runtime and its platforms/ plugin folder from that "
+            "directory; point --dll at the DLL inside a real Motive "
+            "installation rather than a copied-out one.".format(dll_path))
+
+    plugins = os.path.join(root, "platforms")
+    if not os.path.isdir(plugins):
+        raise BackendUnavailable(
+            backend_name,
+            "Motive root {} has no platforms/ folder, so Qt cannot start. "
+            "This usually means NMotive.dll was copied out of a real "
+            "installation.".format(root))
+
+    # Qt reads these at initialisation; setting them later has no effect.
+    os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugins
+    os.environ.setdefault("QT_PLUGIN_PATH", root)
+
+    # Let the loader find Qt5Core.dll and the other native siblings.
+    for folder in (root, os.path.dirname(os.path.abspath(dll_path))):
+        if not os.path.isdir(folder):
+            continue
+        adder = getattr(os, "add_dll_directory", None)
+        if adder is not None:
+            try:
+                _DLL_DIR_HANDLES.append(adder(folder))
+            except OSError:
+                pass
+        os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+
+    return root
 
 
 def _verify_assembly(path, backend_name):

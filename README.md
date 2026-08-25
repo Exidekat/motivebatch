@@ -50,6 +50,39 @@ Linux it is accepted and ignored, so the same command line works everywhere.
 > A lone copied-out `NMotive.dll` will usually fail to load; point at the one in
 > the real install directory.
 
+## Troubleshooting
+
+**`Could not find the Qt platform plugin "windows" in ""`** — NMotive links Qt,
+and Qt resolves its platform plugin relative to the *host executable*, which
+here is `python.exe` rather than `Motive.exe`. motivebatch handles this by
+walking up from `NMotive.dll` to the Motive install root and setting
+`QT_QPA_PLATFORM_PLUGIN_PATH` before the DLL loads.
+
+If you still see it, `NMotive.dll` is almost certainly detached from its
+installation. Qt calls `qFatal` here, killing the process with exit code
+`-1073740791` (`0xC0000409`) before any error handling can run, so point
+`--dll` at the DLL inside a real Motive install:
+
+```
+convert.bat "C:\Program Files\OptiTrack\Motive\assemblies\x64\NMotive.dll" Take.tak
+```
+
+`--list-backends` reports the detected Motive root, which is the quickest way to
+confirm it was found.
+
+On a headless machine (a service, or a session with no desktop) the `windows`
+platform plugin cannot initialise at all. Set a headless platform first:
+
+```
+set QT_QPA_PLATFORM=minimal
+```
+
+**Exit code `-1073741515` (`0xC0000135`)** — a sibling DLL is missing entirely.
+Same cause, same fix: use the DLL in the real install directory.
+
+**Falling back to the native backend unexpectedly** — run with `--verbose`; it
+prints the exact reason NMotive was skipped.
+
 ## Command line
 
 ```

@@ -14,7 +14,9 @@ import fixtures  # noqa: E402
 
 from motivebatch import backends, cli, config  # noqa: E402
 from motivebatch.backends import base as fmt  # noqa: E402
-from motivebatch.backends.nmotive import NMotiveBackend, _verify_assembly  # noqa: E402
+from motivebatch.backends.nmotive import (NMotiveBackend, _verify_assembly,  # noqa: E402
+                                          find_motive_root,
+                                          prepare_native_environment)
 from motivebatch.errors import BackendUnavailable, ExportNotSupported  # noqa: E402
 
 
@@ -85,6 +87,68 @@ class TestNMotiveGuards(_Tmp):
         with self.assertRaises(BackendUnavailable) as cm:
             _verify_assembly(path, "nmotive")
         self.assertIn("not a Windows DLL", cm.exception.reason)
+
+
+class TestMotiveRootDiscovery(_Tmp):
+    """Qt needs the Motive install root, which sits above NMotive.dll."""
+
+    def _install(self, with_platforms=True, with_exe=False):
+        root = os.path.join(self.dir, "Motive")
+        x64 = os.path.join(root, "assemblies", "x64")
+        os.makedirs(x64)
+        if with_platforms:
+            os.makedirs(os.path.join(root, "platforms"))
+            open(os.path.join(root, "platforms", "qwindows.dll"), "wb").close()
+        if with_exe:
+            open(os.path.join(root, "Motive.exe"), "wb").close()
+        dll = os.path.join(x64, "NMotive.dll")
+        open(dll, "wb").close()
+        return root, dll
+
+    def test_walks_up_to_the_platforms_folder(self):
+        root, dll = self._install()
+        self.assertEqual(find_motive_root(dll), root)
+
+    def test_motive_exe_also_identifies_the_root(self):
+        root, dll = self._install(with_platforms=False, with_exe=True)
+        self.assertEqual(find_motive_root(dll), root)
+
+    def test_returns_none_for_an_orphaned_dll(self):
+        dll = os.path.join(self.dir, "NMotive.dll")
+        open(dll, "wb").close()
+        self.assertIsNone(find_motive_root(dll))
+
+    def test_environment_points_qt_at_the_plugins(self):
+        root, dll = self._install()
+        saved = {k: os.environ.get(k) for k in
+                 ("QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH", "PATH")}
+        try:
+            got = prepare_native_environment(dll, "nmotive")
+            self.assertEqual(got, root)
+            self.assertEqual(os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"],
+                             os.path.join(root, "platforms"))
+            self.assertIn(root, os.environ["PATH"])
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_orphaned_dll_is_explained_not_crashed(self):
+        # Qt aborts the process if it starts without plugins, so this has to
+        # fail up front with an actionable message instead.
+        dll = os.path.join(self.dir, "NMotive.dll")
+        open(dll, "wb").close()
+        with self.assertRaises(BackendUnavailable) as cm:
+            prepare_native_environment(dll, "nmotive")
+        self.assertIn("Motive install directory", cm.exception.reason)
+
+    def test_missing_platforms_folder_is_explained(self):
+        root, dll = self._install(with_platforms=False, with_exe=True)
+        with self.assertRaises(BackendUnavailable) as cm:
+            prepare_native_environment(dll, "nmotive")
+        self.assertIn("platforms", cm.exception.reason)
 
 
 class TestConfigDiscovery(_Tmp):
