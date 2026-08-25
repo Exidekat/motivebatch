@@ -518,6 +518,31 @@ class TestProgressReporting(_Tmp):
         bar.pulse()          # must not raise
         self.assertIn("working", s.getvalue())
 
+    def test_process_stats_are_available_or_absent_cleanly(self):
+        from motivebatch.progress import format_process_stats, process_stats
+        stats = process_stats()
+        self.assertTrue(stats is None or isinstance(stats, dict))
+        # Must never raise, and must render to a string either way.
+        self.assertIsInstance(format_process_stats(stats), str)
+        self.assertEqual(format_process_stats(None), "")
+
+    def test_process_stats_reported_on_a_stall(self):
+        import motivebatch.progress as pr
+        path = os.path.join(self.dir, "stalled.csv")
+        open(path, "wb").write(b"x" * 4096)
+        detail = pr.file_watcher(path)
+        detail()
+        real = time.time
+        try:
+            pr.time.time = lambda: real() + 900
+            pr.process_stats = lambda: {"rss": 3 * 1024 ** 3,
+                                        "written": 940 * 1024 ** 2}
+            text = detail()
+        finally:
+            pr.time.time = real
+        self.assertIn("mem 3.0 GB", text)
+        self.assertIn("proc wrote 940.0 MB", text)
+
     def test_indeterminate_bar_shows_elapsed_time(self):
         from motivebatch.progress import Progress
         s = self._tty()

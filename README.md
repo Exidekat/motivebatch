@@ -214,9 +214,27 @@ frozen number, and names any temp file that appeared beside it:
 
 A stalled destination while the process is still writing to disk means the
 bytes are going somewhere else — an exporter-internal temp file, or the
-pagefile if NMotive is buffering the export in memory. To find out which, open
-Resource Monitor (`resmon`), go to **Disk → Disk Activity** and filter on
-`python.exe`; it lists the exact file being written. The bar draws on stderr and switches itself
+pagefile if NMotive is buffering the export in memory. On a stall the bar adds
+this process's own memory and I/O counters, which distinguish the two without
+any external tooling:
+
+```
+  ... 1.1 MB  unchanged 26m00s  [mem 3.4 GB, proc wrote 940.0 MB]
+```
+
+Memory climbing into the gigabytes means NMotive is buffering the export in
+RAM; once that starts paging, throughput collapses. Modest memory with the
+written counter climbing means it is streaming to a file elsewhere. If you need
+to find that file:
+
+```powershell
+Get-ChildItem $env:TEMP, "$env:USERPROFILE\Desktop" -File |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 10 Name,
+  @{n='MB';e={[int]($_.Length/1MB)}}, LastWriteTime
+```
+
+For a take that will not fit in memory, `--backend native` streams frame by
+frame in bounded memory instead. The bar draws on stderr and switches itself
 off when output is redirected, so `convert.sh take.tak > files.txt` still yields
 a clean list of paths. `--no-progress` disables it.
 

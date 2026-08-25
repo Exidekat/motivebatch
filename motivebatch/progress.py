@@ -26,6 +26,91 @@ def human_bytes(n):
         n /= 1024.0
 
 
+def process_stats():
+    """This process's resident memory and total bytes written, or ``None``.
+
+    Answers the question a stalled destination raises -- is the exporter
+    buffering in memory, or streaming to somewhere else? -- from inside the
+    process, so no external tooling is needed.
+    """
+    if sys.platform.startswith("win"):
+        return _process_stats_windows()
+    return _process_stats_proc()
+
+
+def _process_stats_windows():
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Mem(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD),
+                        ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t),
+                        ("PrivateUsage", ctypes.c_size_t)]
+
+        class _Io(ctypes.Structure):
+            _fields_ = [("ReadOperationCount", ctypes.c_ulonglong),
+                        ("WriteOperationCount", ctypes.c_ulonglong),
+                        ("OtherOperationCount", ctypes.c_ulonglong),
+                        ("ReadTransferCount", ctypes.c_ulonglong),
+                        ("WriteTransferCount", ctypes.c_ulonglong),
+                        ("OtherTransferCount", ctypes.c_ulonglong)]
+
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        mem, io = _Mem(), _Io()
+        mem.cb = ctypes.sizeof(_Mem)
+        out = {}
+        if ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(mem), ctypes.sizeof(mem)):
+            out["rss"] = int(mem.WorkingSetSize)
+            out["private"] = int(mem.PrivateUsage)
+        if ctypes.windll.kernel32.GetProcessIoCounters(handle, ctypes.byref(io)):
+            out["written"] = int(io.WriteTransferCount)
+        return out or None
+    except Exception:
+        return None
+
+
+def _process_stats_proc():
+    out = {}
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    out["rss"] = int(line.split()[1]) * 1024
+                    break
+    except OSError:
+        pass
+    try:
+        with open("/proc/self/io") as fh:
+            for line in fh:
+                if line.startswith("write_bytes:"):
+                    out["written"] = int(line.split()[1])
+                    break
+    except OSError:
+        pass
+    return out or None
+
+
+def format_process_stats(stats):
+    if not stats:
+        return ""
+    bits = []
+    if stats.get("rss"):
+        bits.append("mem {}".format(human_bytes(stats["rss"])))
+    if stats.get("written"):
+        bits.append("proc wrote {}".format(human_bytes(stats["written"])))
+    return ", ".join(bits)
+
+
 #: How often to rescan the output directory for temp files (seconds).
 _SCAN_EVERY = 2.0
 
@@ -102,6 +187,10 @@ def file_watcher(path):
             scratch = _scratch(now)
             if scratch:
                 text += "  ({} {})".format(scratch[0], human_bytes(scratch[1]))
+            # A stall is exactly when the process counters are diagnostic.
+            proc = format_process_stats(process_stats())
+            if proc:
+                text += "  [{}]".format(proc)
         return text
 
     return detail
@@ -205,7 +294,7 @@ class Progress(object):
     # -- rendering ------------------------------------------------------------
 
     def _line_width(self):
-        return self.width + len(self.label) + 56
+        return self.width + len(self.label) + 96
 
     def _draw(self, force=False, final=False):
         if not self.enabled:
